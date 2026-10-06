@@ -15,10 +15,15 @@ local KEY_GATE_KEYS={
  ["DEVIL-5312-HHTR"]=true,["DEVIL-5312-HERQ"]=true,
 }
 local KEY_GATE_FILE="DevilSight.activation"
+local KEY_GATE_ENV=(type(getgenv)=="function" and getgenv()) or _G
+local function normalizeKey(value)
+ if type(value)~="string" then return "" end
+ return value:gsub("^%s+",""):gsub("%s+$",""):gsub("^\239\187\191",""):upper()
+end
 local function gateSaved()
  if type(isfile)~="function" or type(readfile)~="function" then return false end
  local ok,v=pcall(function() if isfile(KEY_GATE_FILE) then return readfile(KEY_GATE_FILE) end end)
- if ok and type(v)=="string" then return KEY_GATE_KEYS[v:gsub("^%s+",""):gsub("%s+$","")] == true end
+ if ok and KEY_GATE_KEYS[normalizeKey(v)] then return true end
  return false
 end
 local function gateSave(v)
@@ -26,17 +31,16 @@ local function gateSave(v)
 end
 local function gateClipGet()
  for _,n in ipairs({"getclipboard","readclipboard"}) do
-  local f=getgenv()[n]; if type(f)=="function" then local ok,v=pcall(f); if ok and type(v)=="string" then return v end end
+  local f=KEY_GATE_ENV[n]; if type(f)=="function" then local ok,v=pcall(f); if ok and type(v)=="string" then return v end end
  end
 end
 local function gateClipSet(v)
  for _,n in ipairs({"setclipboard","toclipboard","set_clipboard"}) do
-  local f=getgenv()[n]; if type(f)=="function" then return pcall(f,v) end
+  local f=KEY_GATE_ENV[n]; if type(f)=="function" then return pcall(f,v) end
  end
  return false
 end
 local function keyGateAuthenticate()
- if gateSaved() then return true end
  local authenticated=false
  local gui=Instance.new("ScreenGui"); gui.Name="DevilSightKeyGate"; gui.ResetOnSpawn=false; gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling; gui.Parent=CoreGui
  local frame=Instance.new("Frame"); frame.Size=UDim2.new(0,430,0,245); frame.Position=UDim2.new(.5,-215,.5,-122); frame.BackgroundColor3=Color3.fromRGB(15,18,22); frame.BorderColor3=Color3.fromRGB(5,8,10); frame.Parent=gui
@@ -48,13 +52,22 @@ local function keyGateAuthenticate()
  end
  lbl("DevilSight",10,Color3.fromRGB(220,225,230)); lbl("KEY REQUIRED",44,Color3.fromRGB(0,180,180)); lbl("Enter your activation key to continue",68,Color3.fromRGB(130,140,150))
  local input=Instance.new("TextBox"); input.Size=UDim2.new(1,-20,0,32); input.Position=UDim2.new(0,10,0,96); input.BackgroundColor3=Color3.fromRGB(25,28,32); input.BorderColor3=Color3.fromRGB(35,40,45); input.TextColor3=Color3.fromRGB(220,225,230); input.PlaceholderColor3=Color3.fromRGB(100,110,120); input.PlaceholderText="DEVIL-5312-XXXX"; input.ClearTextOnFocus=false; input.Font=Enum.Font.Code; input.TextSize=13; input.TextXAlignment=Enum.TextXAlignment.Left; input.Parent=inner
+ local savedKey=nil
+ if type(isfile)=="function" and type(readfile)=="function" then
+  pcall(function()
+   if isfile(KEY_GATE_FILE) then
+    local value=normalizeKey(readfile(KEY_GATE_FILE))
+    if KEY_GATE_KEYS[value] then savedKey=value; input.Text=value end
+   end
+  end)
+ end
  local status=lbl("Waiting for key...",135,Color3.fromRGB(130,140,150))
  local function btn(t,x,w)
   local b=Instance.new("TextButton"); b.Size=UDim2.new(0,w,0,30); b.Position=UDim2.new(0,x,0,174); b.BackgroundColor3=Color3.fromRGB(25,28,32); b.BorderColor3=Color3.fromRGB(35,40,45); b.TextColor3=Color3.fromRGB(210,215,220); b.Text=t; b.Font=Enum.Font.Code; b.TextSize=12; b.Parent=inner; return b
  end
  local paste=btn("PASTE",10,92); local copy=btn("COPY",108,92); local verify=btn("VERIFY",206,92); local recheck=btn("RECHECK",304,116)
  local function verifyKey()
-  local v=input.Text:gsub("^%s+",""):gsub("%s+$",""); input.Text=v
+  local v=normalizeKey(input.Text); input.Text=v
   if KEY_GATE_KEYS[v] then authenticated=true; gateSave(v); status.Text="Key accepted. Opening menu..."; status.TextColor3=Color3.fromRGB(0,220,150); task.wait(.25); gui:Destroy(); return true end
   status.Text="Invalid key. Menu remains locked."; status.TextColor3=Color3.fromRGB(255,90,90); return false
  end
