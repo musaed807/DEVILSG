@@ -120,9 +120,10 @@ function UI.new()
 		TeamCheck = false,
 		FOV = 120,
 		Smoothness = 5,
+		AimPower = 70,
 		BodyAim = "Head",
 		WallCheck = true,
-		Prediction = 0,
+		Prediction = 0.100,
 		StickyTarget = false,
 		LookAtView = false,
 		ActivationKey = "MouseButton2",
@@ -142,8 +143,8 @@ function UI.new()
 		WalkSpeed = 16,
 		LoopWalkSpeed = false,
 		InfiniteJump = false,
-		HitboxEnabled = false,
-		HitboxSize = 15,
+		HitboxEnabled = true,
+		HitboxSize = 20,
 		HitboxTransparency = 0.9,
 		HitboxVisible = false,
 		HitboxPart = "HumanoidRootPart",
@@ -151,6 +152,17 @@ function UI.new()
 		FlyEnabled = false,
 		FlySpeed = 50,
 		NoclipEnabled = false,
+		HealthEscapeEnabled = false,
+		HealthEscapeTrigger = 30,
+		HealthEscapeStop = 55,
+		HealthEscapeRadius = 80,
+		HealthEscapeInterval = 0.35,
+	}
+	self._hitboxOriginals = {}
+	self._healthEscapeState = {
+		active = false,
+		origin = nil,
+		lastTeleport = 0,
 	}
 	self._flyState = {
 		active = false,
@@ -1103,6 +1115,10 @@ function UI:_buildAimbotTab()
 		self._aimbotSettings.Smoothness = v
 	end)
 
+	self:_createSlider(aimGB, "Aim Power", 1, 100, 70, function(v)
+		self._aimbotSettings.AimPower = v
+	end, "%")
+
 	self:_createDropdown(aimGB, "Activation Key", {"MouseButton1", "MouseButton2", "MouseButton3", "Q", "E", "X", "C", "F", "R", "T", "V", "Z"}, "MouseButton2", function(v)
 		self._aimbotSettings.ActivationKey = v
 	end)
@@ -1134,7 +1150,7 @@ function UI:_buildAimbotTab()
 		self._aimbotSettings.LookAtView = v
 	end)
 
-	self:_createSlider(optGB, "Prediction", 0, 200, 0, function(v)
+	self:_createSlider(optGB, "Prediction", 0, 300, 100, function(v)
 		self._aimbotSettings.Prediction = v / 1000
 	end, "ms")
 
@@ -1222,7 +1238,7 @@ function UI:_buildMiscTab()
 		self._miscSettings.HitboxEnabled = v
 	end)
 
-	self:_createSlider(hitGB, "Hitbox Size", 1, 50, 15, function(v)
+	self:_createSlider(hitGB, "Hitbox Size", 1, 50, 20, function(v)
 		self._miscSettings.HitboxSize = v
 	end)
 
@@ -1241,6 +1257,36 @@ function UI:_buildMiscTab()
 	self:_createCheckbox(hitGB, "Team Check", false, function(v)
 		self._miscSettings.HitboxTeamCheck = v
 	end)
+
+	local healthGB = self:_createGroupbox(leftColumn, "Health Escape", UDim2.new(0, 0, 0, 0), UDim2.new(1, 0, 0, 0))
+	healthGB.AutomaticSize = Enum.AutomaticSize.Y
+
+	self:_createCheckbox(healthGB, "Auto Random Teleport", false, function(v)
+		self._miscSettings.HealthEscapeEnabled = v
+		if not v then
+			self._healthEscapeState.active = false
+			self._healthEscapeState.origin = nil
+		end
+	end)
+
+	self:_createSlider(healthGB, "Trigger Health", 1, 100, 30, function(v)
+		self._miscSettings.HealthEscapeTrigger = v
+	end, "%")
+
+	self:_createSlider(healthGB, "Stop Health", 1, 100, 55, function(v)
+		self._miscSettings.HealthEscapeStop = v
+	end, "%")
+
+	self:_createSlider(healthGB, "Random Radius", 10, 250, 80, function(v)
+		self._miscSettings.HealthEscapeRadius = v
+	end)
+
+	self:_createSlider(healthGB, "Teleport Interval", 10, 1000, 350, function(v)
+		self._miscSettings.HealthEscapeInterval = v / 1000
+	end, "ms")
+
+	self:_createInfoLabel(healthGB, "At <= Trigger: random teleport. At >= Stop: self-eliminate.")
+
 end
 
 function UI:_buildInfoTab()
@@ -1951,7 +1997,8 @@ function UI:_setupAimbot()
 		end
 
 		local smooth = math.max(self._aimbotSettings.Smoothness, 1)
-		local alpha = 1 / smooth
+		local power = math.clamp(self._aimbotSettings.AimPower / 100, 0.01, 1)
+		local alpha = math.clamp((1 / smooth) * power * 1.75, 0.01, 1)
 
 		if self._aimbotSettings.LookAtView then
 			local cf = CFrame.lookAt(cam.CFrame.Position, aimPos)
@@ -2176,6 +2223,10 @@ function UI:_setupMisc()
 	end)
 
 	local function onCharacterAdded(char)
+		self._healthEscapeState.active = false
+		self._healthEscapeState.origin = nil
+		self._hitboxOriginals = {}
+
 		if self._flyState.active then
 			task.wait(0.5)
 			self:_toggleFly(false)
@@ -2201,6 +2252,7 @@ function UI:_setupMisc()
 	end)
 
 	self:_connect(RunService.Heartbeat, function()
+		-- WalkSpeed
 		if self._miscSettings.LoopWalkSpeed then
 			pcall(function()
 				local char = LocalPlayer.Character
@@ -2211,46 +2263,99 @@ function UI:_setupMisc()
 			end)
 		end
 
+		-- Hitbox expander
 		if self._miscSettings.HitboxEnabled then
 			for _, p in ipairs(Players:GetPlayers()) do
 				if p == LocalPlayer then continue end
 				if self._miscSettings.HitboxTeamCheck and self:_isTeammate(p) then continue end
 				pcall(function()
-					if p.Character then
-						local part = p.Character:FindFirstChild(self._miscSettings.HitboxPart)
-						if part then
-							local sz = self._miscSettings.HitboxSize
-							part.Size = Vector3.new(sz, sz, sz)
-							part.CanCollide = false
-							if self._miscSettings.HitboxVisible then
-								part.Transparency = self._miscSettings.HitboxTransparency
-								part.BrickColor = BrickColor.new("Really black")
-								part.Material = Enum.Material.Neon
-							else
-								part.Transparency = 1
-							end
-						end
+					if not p.Character then return end
+					local part = p.Character:FindFirstChild(self._miscSettings.HitboxPart)
+					if not part or not part:IsA("BasePart") then return end
+
+					if not self._hitboxOriginals[part] then
+						self._hitboxOriginals[part] = {
+							Size = part.Size,
+							Transparency = part.Transparency,
+							CanCollide = part.CanCollide,
+							Material = part.Material,
+							BrickColor = part.BrickColor,
+						}
+					end
+
+					local sz = math.clamp(self._miscSettings.HitboxSize, 1, 100)
+					part.Size = Vector3.new(sz, sz, sz)
+					part.CanCollide = false
+
+					if self._miscSettings.HitboxVisible then
+						part.Transparency = self._miscSettings.HitboxTransparency
+						part.BrickColor = BrickColor.new("Really black")
+						part.Material = Enum.Material.Neon
+					else
+						part.Transparency = 1
 					end
 				end)
 			end
 		else
-			for _, p in ipairs(Players:GetPlayers()) do
-				if p == LocalPlayer then continue end
+			for part, original in pairs(self._hitboxOriginals) do
 				pcall(function()
-					if p.Character then
-						local part = p.Character:FindFirstChild(self._miscSettings.HitboxPart)
-						if part then
-							if self._miscSettings.HitboxPart == "HumanoidRootPart" then
-								part.Size = Vector3.new(2, 2, 1)
-							else
-								part.Size = Vector3.new(1.2, 1.2, 1.2)
-							end
-							part.Transparency = 1
-							part.CanCollide = false
-						end
+					if part and part.Parent then
+						part.Size = original.Size
+						part.Transparency = original.Transparency
+						part.CanCollide = original.CanCollide
+						part.Material = original.Material
+						part.BrickColor = original.BrickColor
 					end
 				end)
+				self._hitboxOriginals[part] = nil
 			end
+		end
+
+		-- Health Escape:
+		-- <= 30 HP => repeatedly move to random positions around the saved origin.
+		-- Once HP reaches 55+ => immediately set local Humanoid health to 0.
+		if self._miscSettings.HealthEscapeEnabled then
+			pcall(function()
+				local char = LocalPlayer.Character
+				local hum = char and char:FindFirstChildOfClass("Humanoid")
+				local root = char and char:FindFirstChild("HumanoidRootPart")
+				if not hum or not root or hum.Health <= 0 then
+					self._healthEscapeState.active = false
+					self._healthEscapeState.origin = nil
+					return
+				end
+
+				local trigger = self._miscSettings.HealthEscapeTrigger
+				local stop = math.max(self._miscSettings.HealthEscapeStop, trigger + 1)
+				local now = tick()
+
+				if hum.Health <= trigger then
+					if not self._healthEscapeState.active then
+						self._healthEscapeState.active = true
+						self._healthEscapeState.origin = root.Position
+						self._healthEscapeState.lastTeleport = 0
+					end
+
+					if now - self._healthEscapeState.lastTeleport >= self._miscSettings.HealthEscapeInterval then
+						local origin = self._healthEscapeState.origin or root.Position
+						local radius = self._miscSettings.HealthEscapeRadius
+						local angle = math.random() * math.pi * 2
+						local distance = math.random() * radius
+						local offset = Vector3.new(
+							math.cos(angle) * distance,
+							math.random(-8, 12),
+							math.sin(angle) * distance
+						)
+						root.CFrame = CFrame.new(origin + offset)
+						root.AssemblyLinearVelocity = Vector3.zero
+						self._healthEscapeState.lastTeleport = now
+					end
+				elseif self._healthEscapeState.active and hum.Health >= stop then
+					self._healthEscapeState.active = false
+					self._healthEscapeState.origin = nil
+					hum.Health = 0
+				end
+			end)
 		end
 	end)
 end
