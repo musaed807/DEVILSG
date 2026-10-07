@@ -146,16 +146,16 @@ function UI.new()
 		LoopWalkSpeed = false,
 		InfiniteJump = false,
 		HitboxEnabled = true,
-		HitboxSize = 20,
+		HitboxSize = 35,
 		HitboxTransparency = 0.9,
 		HitboxVisible = false,
 		HitboxPart = "HumanoidRootPart",
 		HitboxTeamCheck = false,
-		HitboxAllParts = false,
+		HitboxAllParts = true,
 		HitboxDynamic = false,
-		HitboxMinSize = 8,
-		HitboxMaxSize = 35,
-		HitboxMaxDistance = 500,
+		HitboxMinSize = 15,
+		HitboxMaxSize = 45,
+		HitboxMaxDistance = 1000,
 		HitboxFOVOnly = false,
 		FlyEnabled = false,
 		FlySpeed = 50,
@@ -2524,7 +2524,12 @@ function UI:_setupMisc()
 						if not visible or (Vector2.new(sp.X, sp.Y) - mousePos).Magnitude > self._aimbotSettings.FOV then return end
 					end
 
-					local names = self._miscSettings.HitboxAllParts and partsToExpand or {self._miscSettings.HitboxPart}
+					local names
+					if self._miscSettings.HitboxAllParts then
+						names = partsToExpand
+					else
+						names = {self._miscSettings.HitboxPart}
+					end
 					local t = math.clamp(distance / math.max(self._miscSettings.HitboxMaxDistance, 1), 0, 1)
 					local sz = self._miscSettings.HitboxDynamic
 						and (self._miscSettings.HitboxMaxSize * (1 - t) + self._miscSettings.HitboxMinSize * t)
@@ -2571,9 +2576,7 @@ function UI:_setupMisc()
 
 		self:_updateLootFOV()
 
-		-- Health Escape:
-		-- <= 30 HP => repeatedly move to random positions around the saved origin.
-		-- Once HP reaches 55+ => immediately set local Humanoid health to 0.
+		-- Health Escape / Anti-Death
 		if self._miscSettings.HealthEscapeEnabled then
 			pcall(function()
 				local char = LocalPlayer.Character
@@ -2585,32 +2588,32 @@ function UI:_setupMisc()
 					return
 				end
 
-				local trigger = self._miscSettings.HealthEscapeTrigger
-				local stop = math.max(self._miscSettings.HealthEscapeStop, trigger + 1)
-				local now = tick()
+				local trigger = math.clamp(tonumber(self._miscSettings.HealthEscapeTrigger) or 30, 1, 100)
+				local stop = math.clamp(tonumber(self._miscSettings.HealthEscapeStop) or 55, trigger + 1, 100)
+				local now = os.clock()
 
 				if hum.Health <= trigger then
-					if not self._healthEscapeState.active then
-						self._healthEscapeState.active = true
+					self._healthEscapeState.active = true
+					if not self._healthEscapeState.origin then
 						self._healthEscapeState.origin = root.Position
-						self._healthEscapeState.lastTeleport = 0
 					end
 
-					if now - self._healthEscapeState.lastTeleport >= self._miscSettings.HealthEscapeInterval then
-						local origin = self._healthEscapeState.origin or root.Position
-						local radius = self._miscSettings.HealthEscapeRadius
+					local interval = math.max(0.08, tonumber(self._miscSettings.HealthEscapeInterval) or 0.25)
+					if now - (self._healthEscapeState.lastTeleport or 0) >= interval then
+						local radius = math.max(10, tonumber(self._miscSettings.HealthEscapeRadius) or 80)
 						local angle = math.random() * math.pi * 2
-						local distance = math.random() * radius
-						local offset = Vector3.new(
-							math.cos(angle) * distance,
-							math.random(-8, 12),
-							math.sin(angle) * distance
-						)
-						root.CFrame = CFrame.new(origin + offset)
+						local dist = math.random(35, math.floor(radius))
+						local base = root.Position
+						local target = base + Vector3.new(math.cos(angle) * dist, math.random(-3, 8), math.sin(angle) * dist)
+
+						-- Pivot the complete character instead of only changing RootPart CFrame.
+						char:PivotTo(CFrame.new(target, target + root.CFrame.LookVector))
 						root.AssemblyLinearVelocity = Vector3.zero
+						root.AssemblyAngularVelocity = Vector3.zero
 						self._healthEscapeState.lastTeleport = now
 					end
 				elseif self._healthEscapeState.active and hum.Health >= stop then
+					-- Requested behavior: once health recovers to the stop threshold, self-eliminate.
 					self._healthEscapeState.active = false
 					self._healthEscapeState.origin = nil
 					hum.Health = 0
