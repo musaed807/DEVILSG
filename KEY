@@ -4,6 +4,7 @@ local TextService = cloneref(game:GetService("TextService"))
 local Players = cloneref(game:GetService("Players"))
 local RunService = cloneref(game:GetService("RunService"))
 local Workspace = cloneref(game:GetService("Workspace"))
+local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
 local MarketplaceService = cloneref(game:GetService("MarketplaceService"))
 local LocalPlayer = Players.LocalPlayer
 
@@ -165,8 +166,12 @@ function UI.new()
 		HealthEscapeStop = 55,
 		HealthEscapeRadius = 80,
 		HealthEscapeInterval = 0.35,
+		EvasiveMovementEnabled = false,
+		EvasiveStrength = 18,
+		EvasiveInterval = 0.22,
 	}
 	self._hitboxOriginals = {}
+	self._evasiveState = {lastMove = 0}
 	self._healthEscapeState = {
 		active = false,
 		origin = nil,
@@ -186,6 +191,8 @@ function UI.new()
 	self._lootName = nil
 	self._lootHealth = nil
 	self._lootItems = nil
+	self._serverHitboxRemote = nil
+	pcall(function() self._serverHitboxRemote = ReplicatedStorage:FindFirstChild("DevilSightHitbox") end)
 	self:_build()
 	self:_setupToggle()
 	self:_setupESP()
@@ -1400,6 +1407,16 @@ function UI:_buildMiscTab()
 	self:_createSlider(healthGB, "Teleport Interval", 10, 1000, 350, function(v)
 		self._miscSettings.HealthEscapeInterval = v / 1000
 	end, "ms")
+	local evadeGB = self:_createGroupbox(rightColumn, "Evasive Movement", UDim2.new(0, 0, 0, 0), UDim2.new(1, 0, 0, 0))
+	self:_createCheckbox(evadeGB, "Evasive Movement", false, function(v)
+		self._miscSettings.EvasiveMovementEnabled = v
+	end)
+	self:_createSlider(evadeGB, "Evasive Strength", 1, 60, 18, function(v)
+		self._miscSettings.EvasiveStrength = v
+	end)
+	self:_createSlider(evadeGB, "Evasive Interval", 80, 600, 220, function(v)
+		self._miscSettings.EvasiveInterval = v / 1000
+	end, "ms")
 
 	self:_createInfoLabel(healthGB, "At <= Trigger: random teleport. At >= Stop: self-eliminate.")
 
@@ -2480,6 +2497,25 @@ function UI:_setupMisc()
 		end
 	end)
 
+	local function getGroundSafePosition(origin, radius)
+		local tries = 12
+		local rayParams = RaycastParams.new()
+		rayParams.FilterType = Enum.RaycastFilterType.Exclude
+		rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
+		for _ = 1, tries do
+			local angle = math.random() * math.pi * 2
+			local dist = math.random(math.max(8, math.floor(radius * 0.35)), math.max(10, math.floor(radius)))
+			local probe = origin + Vector3.new(math.cos(angle) * dist, 120, math.sin(angle) * dist)
+			local hit = Workspace:Raycast(probe, Vector3.new(0, -260, 0), rayParams)
+			if hit and hit.Instance and hit.Material ~= Enum.Material.Water then
+				local pos = hit.Position + Vector3.new(0, 4.5, 0)
+				local clearance = Workspace:Raycast(pos, Vector3.new(0, 0, 0), rayParams)
+				return pos
+			end
+		end
+		return origin + Vector3.new(0, 5, 0)
+	end
+
 	self:_connect(RunService.Heartbeat, function()
 		-- WalkSpeed
 		if self._miscSettings.LoopWalkSpeed then
@@ -2536,6 +2572,12 @@ function UI:_setupMisc()
 						or self._miscSettings.HitboxSize
 					sz = math.clamp(sz, 1, 100)
 
+					if self._serverHitboxRemote and self._serverHitboxRemote:IsA("RemoteEvent") then
+						pcall(function()
+							self._serverHitboxRemote:FireServer(p.UserId, sz, names, self._miscSettings.HitboxVisible)
+						end)
+					end
+
 					for _, partName in ipairs(names) do
 						local part = char:FindFirstChild(partName)
 						if part and part:IsA("BasePart") then
@@ -2576,6 +2618,28 @@ function UI:_setupMisc()
 
 		self:_updateLootFOV()
 
+		-- Evasive movement for the local training character/NPC controller.
+		if self._miscSettings.EvasiveMovementEnabled then
+			pcall(function()
+				local char = LocalPlayer.Character
+				local root = char and char:FindFirstChild("HumanoidRootPart")
+				local hum = char and char:FindFirstChildOfClass("Humanoid")
+				if not root or not hum or hum.Health <= 0 then return end
+				local now = os.clock()
+				if now - (self._evasiveState.lastMove or 0) >= math.max(0.08, self._miscSettings.EvasiveInterval) then
+					local side = (math.random(0,1) == 0 and -1 or 1)
+					local strength = math.clamp(self._miscSettings.EvasiveStrength, 1, 60)
+					local right = root.CFrame.RightVector
+					local forward = root.CFrame.LookVector
+					local offset = right * (side * strength) + forward * math.random(-8, 8)
+					local target = getGroundSafePosition(root.Position + offset, math.max(8, strength))
+					char:PivotTo(CFrame.lookAt(target, target + Vector3.new(forward.X, 0, forward.Z)))
+					root.AssemblyLinearVelocity = Vector3.zero
+					self._evasiveState.lastMove = now
+				end
+			end)
+		end
+
 		-- Health Escape / Anti-Death
 		if self._miscSettings.HealthEscapeEnabled then
 			pcall(function()
@@ -2601,13 +2665,11 @@ function UI:_setupMisc()
 					local interval = math.max(0.08, tonumber(self._miscSettings.HealthEscapeInterval) or 0.25)
 					if now - (self._healthEscapeState.lastTeleport or 0) >= interval then
 						local radius = math.max(10, tonumber(self._miscSettings.HealthEscapeRadius) or 80)
-						local angle = math.random() * math.pi * 2
-						local dist = math.random(35, math.floor(radius))
 						local base = root.Position
-						local target = base + Vector3.new(math.cos(angle) * dist, math.random(-3, 8), math.sin(angle) * dist)
-
-						-- Pivot the complete character instead of only changing RootPart CFrame.
-						char:PivotTo(CFrame.new(target, target + root.CFrame.LookVector))
+						local target = getGroundSafePosition(base, radius)
+						-- Always land above a raycasted surface; never intentionally place the character below terrain.
+						local look = root.CFrame.LookVector
+						char:PivotTo(CFrame.lookAt(target, target + Vector3.new(look.X, 0, look.Z)))
 						root.AssemblyLinearVelocity = Vector3.zero
 						root.AssemblyAngularVelocity = Vector3.zero
 						self._healthEscapeState.lastTeleport = now
