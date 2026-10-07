@@ -114,6 +114,8 @@ function UI.new()
 		HighlightOutlineColor = Color3.fromRGB(255, 255, 255),
 		HighlightFillTransparency = 0.75,
 		HighlightOutlineTransparency = 0,
+		LootFOVEnabled = false,
+		LootMaxItems = 5,
 	}
 	self._aimbotSettings = {
 		Enabled = false,
@@ -149,6 +151,12 @@ function UI.new()
 		HitboxVisible = false,
 		HitboxPart = "HumanoidRootPart",
 		HitboxTeamCheck = false,
+		HitboxAllParts = false,
+		HitboxDynamic = false,
+		HitboxMinSize = 8,
+		HitboxMaxSize = 35,
+		HitboxMaxDistance = 500,
+		HitboxFOVOnly = false,
 		FlyEnabled = false,
 		FlySpeed = 50,
 		NoclipEnabled = false,
@@ -172,6 +180,12 @@ function UI.new()
 		active = false,
 	}
 	self._fovCircle = nil
+	self._lootGui = nil
+	self._lootCard = nil
+	self._lootImage = nil
+	self._lootName = nil
+	self._lootHealth = nil
+	self._lootItems = nil
 	self:_build()
 	self:_setupToggle()
 	self:_setupESP()
@@ -217,6 +231,73 @@ function UI:_build()
 	self:_buildTabArea()
 	self:_buildContentArea()
 	self:_buildTabs()
+
+	self._lootGui = Instance.new("ScreenGui")
+	self._lootGui.Name = "DevilSightLoot"
+	self._lootGui.ResetOnSpawn = false
+	self._lootGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	self._lootGui.Parent = CoreGui
+
+	self._lootCard = Instance.new("Frame")
+	self._lootCard.Size = UDim2.new(0, 230, 0, 92)
+	self._lootCard.BackgroundColor3 = Color3.fromRGB(12, 16, 20)
+	self._lootCard.BackgroundTransparency = 0.08
+	self._lootCard.BorderSizePixel = 0
+	self._lootCard.Visible = false
+	self._lootCard.ZIndex = 50
+	self._lootCard.Parent = self._lootGui
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(0, 180, 180)
+	stroke.Thickness = 1
+	stroke.Transparency = 0.15
+	stroke.Parent = self._lootCard
+
+	self._lootImage = Instance.new("ImageLabel")
+	self._lootImage.Size = UDim2.new(0, 48, 0, 48)
+	self._lootImage.Position = UDim2.new(0, 8, 0, 8)
+	self._lootImage.BackgroundColor3 = Color3.fromRGB(25, 30, 35)
+	self._lootImage.BackgroundTransparency = 0.15
+	self._lootImage.BorderSizePixel = 0
+	self._lootImage.Visible = false
+	self._lootImage.ZIndex = 51
+	self._lootImage.Parent = self._lootCard
+
+	self._lootName = Instance.new("TextLabel")
+	self._lootName.Size = UDim2.new(1, -70, 0, 22)
+	self._lootName.Position = UDim2.new(0, 64, 0, 7)
+	self._lootName.BackgroundTransparency = 1
+	self._lootName.TextColor3 = Color3.fromRGB(255, 255, 255)
+	self._lootName.Font = Enum.Font.Code
+	self._lootName.TextSize = 14
+	self._lootName.TextXAlignment = Enum.TextXAlignment.Left
+	self._lootName.TextTruncate = Enum.TextTruncate.AtEnd
+	self._lootName.ZIndex = 51
+	self._lootName.Parent = self._lootCard
+
+	self._lootHealth = Instance.new("TextLabel")
+	self._lootHealth.Size = UDim2.new(1, -70, 0, 18)
+	self._lootHealth.Position = UDim2.new(0, 64, 0, 29)
+	self._lootHealth.BackgroundTransparency = 1
+	self._lootHealth.TextColor3 = Color3.fromRGB(80, 255, 150)
+	self._lootHealth.Font = Enum.Font.Code
+	self._lootHealth.TextSize = 12
+	self._lootHealth.TextXAlignment = Enum.TextXAlignment.Left
+	self._lootHealth.ZIndex = 51
+	self._lootHealth.Parent = self._lootCard
+
+	self._lootItems = Instance.new("TextLabel")
+	self._lootItems.Size = UDim2.new(1, -16, 0, 42)
+	self._lootItems.Position = UDim2.new(0, 8, 0, 48)
+	self._lootItems.BackgroundTransparency = 1
+	self._lootItems.TextColor3 = Color3.fromRGB(190, 205, 215)
+	self._lootItems.Font = Enum.Font.Code
+	self._lootItems.TextSize = 11
+	self._lootItems.TextXAlignment = Enum.TextXAlignment.Left
+	self._lootItems.TextYAlignment = Enum.TextYAlignment.Top
+	self._lootItems.TextWrapped = true
+	self._lootItems.ZIndex = 51
+	self._lootItems.Parent = self._lootCard
 end
 
 function UI:_buildDrag()
@@ -1010,6 +1091,17 @@ function UI:_buildVisualsTab()
 		self._espSettings.TeamCheck = v
 	end)
 
+	self:_createSeparator(espGB)
+
+	self:_createCheckbox(espGB, "FOV Loot Card", false, function(v)
+		self._espSettings.LootFOVEnabled = v
+		if not v and self._lootCard then self._lootCard.Visible = false end
+	end)
+
+	self:_createSlider(espGB, "Loot Items", 1, 8, 5, function(v)
+		self._espSettings.LootMaxItems = v
+	end)
+
 	self:_createColorpicker(espGB, "Box Color", self._espSettings.BoxColor, function(c)
 		self._espSettings.BoxColor = c
 	end)
@@ -1256,6 +1348,30 @@ function UI:_buildMiscTab()
 
 	self:_createCheckbox(hitGB, "Team Check", false, function(v)
 		self._miscSettings.HitboxTeamCheck = v
+	end)
+
+	self:_createCheckbox(hitGB, "All Body Parts", false, function(v)
+		self._miscSettings.HitboxAllParts = v
+	end)
+
+	self:_createCheckbox(hitGB, "Dynamic Size", false, function(v)
+		self._miscSettings.HitboxDynamic = v
+	end)
+
+	self:_createSlider(hitGB, "Min Dynamic Size", 1, 50, 8, function(v)
+		self._miscSettings.HitboxMinSize = v
+	end)
+
+	self:_createSlider(hitGB, "Max Dynamic Size", 1, 100, 35, function(v)
+		self._miscSettings.HitboxMaxSize = v
+	end)
+
+	self:_createSlider(hitGB, "Max Distance", 25, 1000, 500, function(v)
+		self._miscSettings.HitboxMaxDistance = v
+	end, " studs")
+
+	self:_createCheckbox(hitGB, "FOV Only", false, function(v)
+		self._miscSettings.HitboxFOVOnly = v
 	end)
 
 	local healthGB = self:_createGroupbox(leftColumn, "Health Escape", UDim2.new(0, 0, 0, 0), UDim2.new(1, 0, 0, 0))
@@ -1846,6 +1962,119 @@ function ESPObject:destroy()
 	self._skeletonLines = {}
 end
 
+function UI:_getPlayerLoot(player)
+	local items = {}
+	local seen = {}
+
+	local function addItem(obj)
+		if not obj or seen[obj] then return end
+		if obj:IsA("Tool") then
+			seen[obj] = true
+			table.insert(items, {Name = obj.Name, Image = obj.TextureId or ""})
+		elseif obj:IsA("StringValue") or obj:IsA("IntValue") or obj:IsA("NumberValue") then
+			local parentName = string.lower(obj.Parent and obj.Parent.Name or "")
+			if parentName == "loot" or parentName == "inventory" or parentName == "items" then
+				seen[obj] = true
+				table.insert(items, {Name = obj.Name .. ": " .. tostring(obj.Value), Image = ""})
+			end
+		end
+	end
+
+	pcall(function()
+		local backpack = player:FindFirstChildOfClass("Backpack")
+		if backpack then
+			for _, v in ipairs(backpack:GetChildren()) do addItem(v) end
+		end
+		if player.Character then
+			for _, v in ipairs(player.Character:GetChildren()) do addItem(v) end
+		end
+		for _, folderName in ipairs({"Loot", "Inventory", "Items"}) do
+			local folder = player:FindFirstChild(folderName, true)
+			if folder then
+				for _, v in ipairs(folder:GetDescendants()) do addItem(v) end
+			end
+		end
+	end)
+
+	return items
+end
+
+function UI:_updateLootFOV()
+	if not self._lootCard then return end
+	if not self._espSettings.LootFOVEnabled or not self._espEnabled then
+		self._lootCard.Visible = false
+		return
+	end
+
+	local cam = Workspace.CurrentCamera
+	if not cam then self._lootCard.Visible = false return end
+
+	local mousePos = UserInputService:GetMouseLocation()
+	local best, bestD = nil, self._aimbotSettings.FOV
+
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p == LocalPlayer then continue end
+		if self._espSettings.TeamCheck and self:_isTeammate(p) then continue end
+		local char = p.Character
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		local head = char and char:FindFirstChild("Head")
+		if not hum or not head or hum.Health <= 0 then continue end
+
+		local sp, onScreen = cam:WorldToViewportPoint(head.Position)
+		if onScreen then
+			local d = (Vector2.new(sp.X, sp.Y) - mousePos).Magnitude
+			if d <= bestD then
+				bestD = d
+				best = p
+			end
+		end
+	end
+
+	if not best then
+		self._lootCard.Visible = false
+		return
+	end
+
+	local char = best.Character
+	local head = char and char:FindFirstChild("Head")
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not head or not hum then self._lootCard.Visible = false return end
+
+	local sp, visible = cam:WorldToViewportPoint(head.Position + Vector3.new(0, 1.2, 0))
+	if not visible then self._lootCard.Visible = false return end
+
+	local items = self:_getPlayerLoot(best)
+	local names = {}
+	for i = 1, math.min(#items, self._espSettings.LootMaxItems) do
+		table.insert(names, "• " .. items[i].Name)
+	end
+	if #names == 0 then table.insert(names, "• No visible loot") end
+
+	self._lootName.Text = best.DisplayName .. "  @" .. best.Name
+	self._lootHealth.Text = string.format("HP  %d / %d", math.floor(hum.Health), math.floor(hum.MaxHealth))
+	self._lootItems.Text = table.concat(names, "\n")
+
+	local image = ""
+	for _, item in ipairs(items) do
+		if item.Image and item.Image ~= "" then
+			image = item.Image
+			break
+		end
+	end
+
+	if image ~= "" then
+		self._lootImage.Image = image
+		self._lootImage.Visible = true
+	else
+		self._lootImage.Visible = false
+	end
+
+	local x = math.clamp(sp.X + 14, 5, cam.ViewportSize.X - 240)
+	local y = math.clamp(sp.Y - 105, 5, cam.ViewportSize.Y - 100)
+	self._lootCard.Position = UDim2.fromOffset(x, y)
+	self._lootCard.Visible = true
+end
+
 function UI:_setupESP()
 	local function onAdded(p)
 		if p == LocalPlayer then return end
@@ -2263,36 +2492,65 @@ function UI:_setupMisc()
 			end)
 		end
 
-		-- Hitbox expander
+		-- Advanced hitbox expander
 		if self._miscSettings.HitboxEnabled then
+			local cam = Workspace.CurrentCamera
+			local mousePos = UserInputService:GetMouseLocation()
+			local partsToExpand = {
+				"Head", "UpperTorso", "LowerTorso", "Torso", "HumanoidRootPart",
+				"LeftUpperArm", "LeftLowerArm", "LeftHand",
+				"RightUpperArm", "RightLowerArm", "RightHand",
+				"LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
+				"RightUpperLeg", "RightLowerLeg", "RightFoot",
+			}
+
 			for _, p in ipairs(Players:GetPlayers()) do
 				if p == LocalPlayer then continue end
 				if self._miscSettings.HitboxTeamCheck and self:_isTeammate(p) then continue end
 				pcall(function()
-					if not p.Character then return end
-					local part = p.Character:FindFirstChild(self._miscSettings.HitboxPart)
-					if not part or not part:IsA("BasePart") then return end
+					local char = p.Character
+					local localChar = LocalPlayer.Character
+					local localRoot = localChar and localChar:FindFirstChild("HumanoidRootPart")
+					local hum = char and char:FindFirstChildOfClass("Humanoid")
+					local root = char and char:FindFirstChild("HumanoidRootPart")
+					if not char or not localRoot or not hum or hum.Health <= 0 or not root then return end
 
-					if not self._hitboxOriginals[part] then
-						self._hitboxOriginals[part] = {
-							Size = part.Size,
-							Transparency = part.Transparency,
-							CanCollide = part.CanCollide,
-							Material = part.Material,
-							BrickColor = part.BrickColor,
-						}
+					local distance = (root.Position - localRoot.Position).Magnitude
+					if distance > self._miscSettings.HitboxMaxDistance then return end
+
+					if self._miscSettings.HitboxFOVOnly and cam then
+						local aimPart = char:FindFirstChild(self._miscSettings.HitboxPart) or root
+						local sp, visible = cam:WorldToViewportPoint(aimPart.Position)
+						if not visible or (Vector2.new(sp.X, sp.Y) - mousePos).Magnitude > self._aimbotSettings.FOV then return end
 					end
 
-					local sz = math.clamp(self._miscSettings.HitboxSize, 1, 100)
-					part.Size = Vector3.new(sz, sz, sz)
-					part.CanCollide = false
+					local names = self._miscSettings.HitboxAllParts and partsToExpand or {self._miscSettings.HitboxPart}
+					local t = math.clamp(distance / math.max(self._miscSettings.HitboxMaxDistance, 1), 0, 1)
+					local sz = self._miscSettings.HitboxDynamic
+						and (self._miscSettings.HitboxMaxSize * (1 - t) + self._miscSettings.HitboxMinSize * t)
+						or self._miscSettings.HitboxSize
+					sz = math.clamp(sz, 1, 100)
 
-					if self._miscSettings.HitboxVisible then
-						part.Transparency = self._miscSettings.HitboxTransparency
-						part.BrickColor = BrickColor.new("Really black")
-						part.Material = Enum.Material.Neon
-					else
-						part.Transparency = 1
+					for _, partName in ipairs(names) do
+						local part = char:FindFirstChild(partName)
+						if part and part:IsA("BasePart") then
+							if not self._hitboxOriginals[part] then
+								self._hitboxOriginals[part] = {
+									Size = part.Size, Transparency = part.Transparency,
+									CanCollide = part.CanCollide, Material = part.Material,
+									BrickColor = part.BrickColor,
+								}
+							end
+							part.Size = Vector3.new(sz, sz, sz)
+							part.CanCollide = false
+							if self._miscSettings.HitboxVisible then
+								part.Transparency = self._miscSettings.HitboxTransparency
+								part.BrickColor = BrickColor.new("Really black")
+								part.Material = Enum.Material.Neon
+							else
+								part.Transparency = 1
+							end
+						end
 					end
 				end)
 			end
@@ -2310,6 +2568,8 @@ function UI:_setupMisc()
 				self._hitboxOriginals[part] = nil
 			end
 		end
+
+		self:_updateLootFOV()
 
 		-- Health Escape:
 		-- <= 30 HP => repeatedly move to random positions around the saved origin.
@@ -2369,6 +2629,7 @@ function UI:destroy()
 		pcall(function() pf:Destroy() end)
 	end
 	pcall(function() self._screenGui:Destroy() end)
+	pcall(function() if self._lootGui then self._lootGui:Destroy() end end)
 	self._connections = {}
 	self._espObjects = {}
 end
